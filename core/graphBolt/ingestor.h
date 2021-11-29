@@ -156,13 +156,15 @@ public:
     edge *EA = newA(edge, numEdges);
     edge *ED = newA(edge, numEdges);
     uintV source, destination;
+    intV  signSource = 0;
+    
 #ifdef EDGEDATA
     EdgeData *edgeWeightEA = newA(EdgeData, numEdges);
     EdgeData *edgeWeightED = newA(EdgeData, numEdges);
     EdgeData *checkedEdgeWeightEA = newA(EdgeData, numEdges);
     EdgeData *checkedEdgeWeightED = newA(EdgeData, numEdges);
 #endif
-    char edgeType;
+    //char edgeType;
     string line;
     vector<string> tokens;
     long lineCount = 0;
@@ -229,39 +231,40 @@ public:
         while (ss >> buf) {
           tokens.push_back(buf);
         }
+        signSource = stoi(tokens[0]);
 #ifdef EDGEDATA
-        if (tokens.size() == 4) {
-          edgeType = tokens[0].at(0);
-          source = stoi(tokens[1]);
-          destination = stoi(tokens[2]);
+        if (tokens.size() == 3) {
+          //edgeType = tokens[0].at(0);
+          source = stoi(tokens[0]);
+          destination = stoi(tokens[1]);
 
-          if (edgeType == 'a') {
+          if (signSource >= 0) {
             new (edgeWeightEA + uncheckedEACount) EdgeData();
-            edgeWeightEA[uncheckedEACount].createEdgeData(tokens[3].c_str());
+            edgeWeightEA[uncheckedEACount].createEdgeData(tokens[2].c_str());
             uncheckedEA[uncheckedEACount] =
                 make_pair(source, make_pair(destination,
                                             &edgeWeightEA[uncheckedEACount]));
             uncheckedEACount++;
-          } else if (edgeType == 'd') {
+          } else { //if (edgeType == 'd')
             new (edgeWeightED + uncheckedEDCount) EdgeData();
-            edgeWeightED[uncheckedEDCount].createEdgeData(tokens[3].c_str());
+            edgeWeightED[uncheckedEDCount].createEdgeData(tokens[2].c_str());
             uncheckedED[uncheckedEDCount] =
-                make_pair(source, make_pair(destination,
+                make_pair(-signSource, make_pair(destination,
                                             &edgeWeightED[uncheckedEDCount]));
             uncheckedEDCount++;
           }
         }
 #else
-        if (tokens.size() == 3) {
-          edgeType = tokens[0].at(0);
-          source = stoi(tokens[1]);
-          destination = stoi(tokens[2]);
+        if (tokens.size() == 2) {
+          //edgeType = tokens[0].at(0);
+          source = stoi(tokens[0]);
+          destination = stoi(tokens[1]);
 
-          if (edgeType == 'a') {
+          if (signSource >= 0) {
             uncheckedEA[uncheckedEACount] = make_pair(source, destination);
             uncheckedEACount++;
-          } else if (edgeType == 'd') {
-            uncheckedED[uncheckedEDCount] = make_pair(source, destination);
+          } else { // if (edgeType == 'd')
+            uncheckedED[uncheckedEDCount] = make_pair(-signSource, destination);
             uncheckedEDCount++;
           }
         }
@@ -502,10 +505,11 @@ public:
       cout << "Hit Max Batch Size" << endl;
       return false;
     }
-    cleanup();
-
     timer timer1, timer2, fullTimer;
     fullTimer.start();
+    
+    cleanup();
+
     parallel_for(uintV i = 0; i < n; i++) updated_vertices[i] = 0;
 
     long num_edges_read_from_file;
@@ -551,6 +555,8 @@ public:
     my_graph.addVertices(edge_additions.maxVertex);
     edge_additions = my_graph.addEdges(edge_additions, updated_vertices);
     cout << "Edge addition time : " << timer1.next() << "\n";
+    cout << "Ingestion Time : " << fullTimer.stop() << endl;
+    
     if ((edge_additions.size > 0) || (edge_deletions.size > 0)) {
       return true;
     }

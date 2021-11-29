@@ -292,6 +292,24 @@ public:
         output_file << dependency_data[v] << "\n";
       }
     }
+    /****/
+    /*
+    int level = 0;
+    int vid_count = 0;
+    do {
+        vid_count = 0;
+        for (uintV v = 0; v < n; v++) {
+            if (dependency_data[v].level == level) {
+                ++vid_count;
+                if (level == 0) cout << "root = " << v << endl;
+            }
+            
+        }
+        cout << level << ":" << vid_count << endl;
+        ++level;
+    } while (vid_count);
+    */
+    /*****/
     cout << "\n";
     current_batch++;
   }
