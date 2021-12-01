@@ -143,7 +143,7 @@ public:
   getNewEdgesFromFile(ifstream &inputFile, long numEdges, graph<vertex> GA,
                       bool symmetric, bool simpleFlag, bool fixedBatchFlag,
                       bool edgeValidityFlag, bool debugFlag,
-                      bool &streamClosed) {
+                      bool &streamClosed, double& time_other) {
     if (numEdges == 0) {
 #ifdef EDGEDATA
       return make_tuple(edgeArray(nullptr, nullptr, 0, 0),
@@ -188,6 +188,7 @@ public:
     long checkedEDCount = 0;
     long cancelledEdges = 0;
 
+    timer timer1;
     StreamEdge *edgesReceived = newA(StreamEdge, numEdges);
     cout << "Batch Size: " << numEdges << endl;
     do {
@@ -275,6 +276,9 @@ public:
           exit(1);
         }
       }
+
+      //----
+      timer1.start();
       uncheckedEACountOrig = uncheckedEACount;
       uncheckedEDCountOrig = uncheckedEDCount;
 
@@ -477,9 +481,12 @@ public:
         edgeWeightEA[i].del();
       }
 #endif
+      time_other += timer1.stop();
+
     } while (fixedBatchFlag && !streamClosed &&
              (checkedEACount + checkedEDCount) < numEdges);
 
+    timer1.start();
     free(uncheckedEA);
     free(uncheckedED);
 #ifdef EDGEDATA
@@ -487,6 +494,7 @@ public:
     free(edgeWeightED);
 #endif
     free(edgesReceived);
+    time_other += timer1.stop();
 #ifdef EDGEDATA
     return make_tuple(
         edgeArray(EA, checkedEdgeWeightEA, checkedEACount, maxVertex),
@@ -506,11 +514,11 @@ public:
       return false;
     }
     timer timer1, timer2, fullTimer;
+    double time_other = 0;
     fullTimer.start();
     
     cleanup();
 
-    parallel_for(uintV i = 0; i < n; i++) updated_vertices[i] = 0;
 
     long num_edges_read_from_file;
     long num_cancelled_edges;
@@ -521,7 +529,7 @@ public:
         getNewEdgesFromFile(stream_file, max_batch_size, my_graph,
                             my_graph.isSymmetric(), simple_flag,
                             fixed_batch_flag, enforce_edge_validity_flag,
-                            debug_flag, stream_closed);
+                            debug_flag, stream_closed, time_other);
     cout << "Reading Time : " << timer1.stop() << endl;
 
     if (stream_closed && num_edges_read_from_file == 0) {
@@ -530,8 +538,9 @@ public:
       return false;
     }
 
-    double deletions_map_creation_time = 0;
     timer1.start();
+    parallel_for(uintV i = 0; i < n; i++) updated_vertices[i] = 0;
+    double deletions_map_creation_time = 0;
     deletions_data.updateWithEdgesArray(edge_deletions_temp);
     deletions_map_creation_time = timer1.next();
     // cout << "deletions_map_creation_time : " << deletions_map_creation_time
@@ -555,7 +564,8 @@ public:
     my_graph.addVertices(edge_additions.maxVertex);
     edge_additions = my_graph.addEdges(edge_additions, updated_vertices);
     cout << "Edge addition time : " << timer1.next() << "\n";
-    cout << "Ingestion Time : " << fullTimer.stop() << endl;
+    cout << "Edge Sorting time: " << time_other << "\n";
+    cout << "Total Ingestion Time : " << fullTimer.stop() << endl;
     
     if ((edge_additions.size > 0) || (edge_deletions.size > 0)) {
       return true;

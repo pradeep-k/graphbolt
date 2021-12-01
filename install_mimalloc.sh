@@ -41,5 +41,6 @@ make
 
 echo "################################################################################"
 echo "Mimalloc installed."
-echo "Ensure that you export LD_PRELOAD=`pwd`/libmimalloc.so"
+#echo "Ensure that you export LD_PRELOAD=`pwd`/libmimalloc.so"
+echo "Ensure that you export LD_LIBRARY_PATH=`pwd`"
 echo "################################################################################"
