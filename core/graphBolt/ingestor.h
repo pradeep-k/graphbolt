@@ -540,6 +540,10 @@ public:
 
     timer1.start();
     parallel_for(uintV i = 0; i < n; i++) updated_vertices[i] = 0;
+    double addition_time = timer1.stop();
+
+
+    timer1.start();
     double deletions_map_creation_time = 0;
     deletions_data.updateWithEdgesArray(edge_deletions_temp);
     deletions_map_creation_time = timer1.next();
@@ -548,8 +552,7 @@ public:
     edge_deletions =
         my_graph.deleteEdges(deletions_data, updated_vertices, debug_flag);
     edge_deletions_temp.del();
-    cout << "Edge deletion time : "
-         << deletions_map_creation_time + timer1.next() << "\n";
+    double deletion_time = deletions_map_creation_time + timer1.next();
 
     timer1.start();
     if (edge_additions.maxVertex >= n) {
@@ -563,9 +566,14 @@ public:
     }
     my_graph.addVertices(edge_additions.maxVertex);
     edge_additions = my_graph.addEdges(edge_additions, updated_vertices);
-    cout << "Edge addition time : " << timer1.next() << "\n";
-    cout << "Edge Sorting time: " << time_other << "\n";
-    cout << "Total Ingestion Time : " << fullTimer.stop() << endl;
+    addition_time += timer1.next();
+
+    cout << "Edge deletion time : " << deletion_time << "\n";
+         //<< deletions_map_creation_time + timer1.next() << "\n";
+    cout << "Edge addition time : " << addition_time << "\n";
+    cout << "Edge Sorting+ time: " << time_other << "\n";
+    cout << "Total Ingestion Time : " << deletion_time + addition_time + time_other << endl;
+    cout << "Read+ Ingestion Time : " << fullTimer.stop() << endl;
     
     if ((edge_additions.size > 0) || (edge_deletions.size > 0)) {
       return true;
