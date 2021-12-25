@@ -324,7 +324,7 @@ public:
     }
 #endif
 
-    if (_inEdges != NULL) {
+    if (_inEdgeOffsets != NULL) {
       inEdges = newA(uintV *, nn);
       inEdgesArraySize = newA(uintE, nn);
       inEdgeUpdates = newA(uintV, nn);
@@ -354,7 +354,7 @@ public:
       V[i].setOutEdgeDataArray(outEdgeData[i]);
 #endif
 
-      if (_inEdges != NULL) {
+      if (_inEdgeOffsets != NULL) {
         uintE inEdgesSize = V[i].getInDegree();
         inEdges[i] = newA(uintV, inEdgesSize);
         inEdgesArraySize[i] = inEdgesSize;

@@ -308,6 +308,65 @@ uintE removeDuplicates(edge *&array, uintE length, uintE maxLength,
 template <class vertex>
 graph<vertex> readGraphFromFile(char *fname, bool isSymmetric, bool simpleFlag,
                                 bool debugFlag) {
+  unsigned long n = 0; //atol(W.Strings[1]);
+  unsigned long m =  0; //atol(W.Strings[2]);
+
+  /******/
+  FILE* file = fopen(fname, "r");
+  string firstline = "AdjacencyGraph\n";
+  char  line[256];
+  const char* del = "\n";
+  char* token = 0; 
+  
+  if (NULL == fgets(line, sizeof(line), file)) assert(0) ;
+  if (string(line) != firstline) { assert(0);}
+  
+  if (NULL == fgets(line, sizeof(line), file)) assert(0);
+  //token = strtok_r(line, del, &line);
+  sscanf(line, "%lu", &n);
+
+  if (NULL == fgets(line, sizeof(line), file)) assert(0);
+  sscanf(line, "%lu", &m);
+
+  /******/
+  cout << "n :" << n << endl;
+  cout << "m :" << m << endl;
+
+  intE *offsets = newA(intE, n);
+  uintV *edges = 0; //newA(uintV, m);
+  vertex *v = newA(vertex, n);
+  
+  if (!isSymmetric) {
+    intE *tOffsets = newA(intE, n);
+    uintV *inEdges = 0; //newA(uintV, m);
+    parallel_for(uintV i = 0; i < n; i++) {
+        offsets[i] = 0;
+        tOffsets[i] = 0;
+    }
+#ifdef EDGEDATA
+    AdjacencyRep<vertex> *mem = new AdjacencyRep<vertex>(
+        v, n, m, edges, inEdges, offsets, tOffsets, edgeData, inEdgeData);
+#else
+    AdjacencyRep<vertex> *mem =
+        new AdjacencyRep<vertex>(v, n, m, edges, inEdges, offsets, tOffsets);
+#endif
+    return graph<vertex>(v, n, m, mem);
+  } else {
+#ifdef EDGEDATA
+    AdjacencyRep<vertex> *mem = new AdjacencyRep<vertex>(
+        v, n, m, edges, NULL, offsets, NULL, edgeData, NULL);
+#else
+    AdjacencyRep<vertex> *mem =
+        new AdjacencyRep<vertex>(v, n, m, edges, NULL, offsets, NULL);
+#endif
+    return graph<vertex>(v, n, m, mem);
+  }
+
+}
+
+template <class vertex>
+graph<vertex> readGraphFromFile1(char *fname, bool isSymmetric, bool simpleFlag,
+                                bool debugFlag) {
   words W;
   _seq<char> S = readStringFromFile(fname);
   W = stringToWords(S.A, S.n);
@@ -326,8 +385,8 @@ graph<vertex> readGraphFromFile(char *fname, bool isSymmetric, bool simpleFlag,
   unsigned long edgeDataSize = atol(
       W.Strings[3]); // this really doesn't matter (should we even keep it?)
 
-  // cout << "n :" << n << endl;
-  // cout << "m :" << m << endl;
+  cout << "n :" << n << endl;
+  cout << "m :" << m << endl;
 #ifdef EDGEDATA
   if (len != n + 2 * m + 2) {
 #else
