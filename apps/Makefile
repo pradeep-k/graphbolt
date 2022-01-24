@@ -13,7 +13,10 @@ INTE = -DEDGELONG
 #compilers
 $(info ************  Using CILK ************)
 PCC = g++
-PCFLAGS = -std=c++14 -fcilkplus -lcilkrts -g -O3 -DCILK $(INTV) $(INTE) $(EDGEDATA)
+
+#PCFLAGS = -std=c++14 -fcilkplus -lcilkrts -O3 -DCILK $(INTV) $(INTE) $(EDGEDATA)
+PCFLAGS = -std=c++14 -fcilkplus -lcilkrts -g -DB32 -DDEL -DCILK $(INTV) $(INTE) $(EDGEDATA) -I../core/graphBolt/include/ -fopenmp
+#PCFLAGS = -std=c++14 -fcilkplus -lcilkrts -g -DB32 -DCILK $(INTV) $(INTE) $(EDGEDATA)
 LDFLAGS = -L../lib/mimalloc/out/release -lmimalloc 
 
 # dependencies
@@ -25,7 +28,7 @@ GRAPHBOLT=../core/graphBolt/AdaptiveExecutor.h ../core/graphBolt/GraphBoltEngine
 
 OTHERS=../core/main.h
 
-ALL=PageRank LabelPropagation CF COEM SSSP BFS
+ALL=PageRank LabelPropagation CF COEM SSSP BFS gbench
 
 # make
 

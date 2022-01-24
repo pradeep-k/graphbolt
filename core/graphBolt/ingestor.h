@@ -28,6 +28,9 @@
 #include "../graph/graph.h"
 #include <string>
 
+#include "batching.h"
+
+extern ubatch_t* ubatch;
 /**
  * Used to extract values from the binary stream
  **/
@@ -532,7 +535,7 @@ public:
     timer1.start();
     tie(edge_additions, edge_deletions_temp, num_edges_read_from_file,
         num_cancelled_edges) =
-        getNewEdgesFromFile(stream_file, max_batch_size, my_graph,
+        getNewEdgesFromFile2(stream_file, max_batch_size, my_graph,
                             my_graph.isSymmetric(), simple_flag,
                             fixed_batch_flag, enforce_edge_validity_flag,
                             debug_flag, stream_closed, time_other);
@@ -667,15 +670,6 @@ public:
           break;
         }
         signSource = source;
-        /*
-        tokens.clear();
-        string buf;
-        stringstream ss(line);
-        while (ss >> buf) {
-          tokens.push_back(buf);
-        }
-        signSource = stoi(tokens[0]);
-        */
     
         //if (tokens.size() == 2) 
         {
@@ -691,13 +685,246 @@ public:
             uncheckedEDCount++;
           }
         }
-        /*
-        else {
-          std::cout << "Incorrect input format \n" << std::endl;
-          inputFile.close();
-          exit(1);
-        }*/
       }
+
+      //----
+      timer1.start();
+      uncheckedEACountOrig = uncheckedEACount;
+      uncheckedEDCountOrig = uncheckedEDCount;
+
+      quickSort(uncheckedEA, uncheckedEACount, pairBothCmp<uintE>());
+      quickSort(uncheckedED, uncheckedEDCount, pairBothCmp<uintE>());
+
+      bool *EAflag = newAWithZero(bool, uncheckedEACount);
+      bool *EDflag = newAWithZero(bool, uncheckedEDCount);
+
+      // remove duplicates
+      if (simpleFlag) {
+        uncheckedEACount = removeDuplicates(uncheckedEA, uncheckedEACount,
+                                            symmetric, debugFlag);
+
+        uncheckedEDCount = removeDuplicates(uncheckedED, uncheckedEDCount,
+                                            symmetric, debugFlag);
+      }
+
+      if (!fixedBatchFlag) {
+        long eaIndex = 0;
+        long edIndex = 0;
+
+        // remove values that cancel out
+        while (eaIndex < uncheckedEACount && edIndex < uncheckedEDCount) {
+          if (uncheckedEA[eaIndex].first == uncheckedED[edIndex].first &&
+              uncheckedEA[eaIndex].second == uncheckedED[edIndex].second)
+          {
+            EAflag[eaIndex] = true;
+            EDflag[edIndex] = true;
+            if (debugFlag) {
+              cerr << "CANCELLED: " << uncheckedED[edIndex].first << "\t"
+                   << uncheckedED[edIndex].second << "\n";
+            }
+            eaIndex++;
+            edIndex++;
+            cancelledEdges++;
+          } else if (uncheckedEA[eaIndex].first == uncheckedED[edIndex].first) {
+            if (uncheckedEA[eaIndex].second < uncheckedED[edIndex].second)
+            {
+              eaIndex++;
+            } else {
+              edIndex++;
+            }
+          } else if (uncheckedEA[eaIndex].first < uncheckedED[edIndex].first) {
+            eaIndex++;
+          } else {
+            edIndex++;
+          }
+        }
+      }
+
+      // remove all EdgeDeletions >= G.n as they don't exist in the graph
+      parallel_for(long i = 0; i < uncheckedEDCount; i++) {
+        if (uncheckedED[i].first >= GA.n || uncheckedED[i].second >= GA.n) {
+          EDflag[i] = true;
+        }
+      }
+
+      if (simpleFlag) {
+        // check if edge additions edge is already in initial graph
+        // we don't want the same edge from two vertices
+        parallel_for(long i = 0; i < uncheckedEACount; i++) {
+          if (EAflag[i] == false && uncheckedEA[i].first < GA.n) {
+            vertex sourceV = GA.V[uncheckedEA[i].first];
+            parallel_for(uintV j = 0; j < sourceV.getOutDegree(); j++) {
+              if (sourceV.getOutNeighbor(j) == uncheckedEA[i].second)
+              {
+                EAflag[i] = true;
+                if (debugFlag) {
+                  cerr << "INVALID: " << uncheckedEA[i].first << "\t"
+                       << uncheckedEA[i].second << "\n";
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if (edgeValidityFlag) {
+        parallel_for(long i = 0; i < uncheckedEDCount; i++) {
+          // check if edge deletions is valid
+          if (EDflag[i] == false) {
+            EDflag[i] = true;
+            vertex sourceV = GA.V[uncheckedED[i].first];
+            // check if this edge is present in the graph
+            parallel_for(uintV j = 0; j < sourceV.getOutDegree(); j++) {
+              if (sourceV.getOutNeighbor(j) == uncheckedED[i].second)
+              {
+                EDflag[i] = false;
+              }
+            }
+            if (EDflag[i] == true) {
+              if (debugFlag) {
+                cerr << "INVALID: " << uncheckedED[i].first << "\t"
+                     << uncheckedED[i].second << "\n";
+              }
+            }
+          }
+        }
+      }
+
+      long maxCount = max(uncheckedEACount, uncheckedEDCount);
+      for (long index = 0; index < maxCount; index++) {
+        if (index < uncheckedEACount && !EAflag[index]) {
+          EA[checkedEACount].source = uncheckedEA[index].first;
+          EA[checkedEACount].destination = uncheckedEA[index].second;
+          if (EA[checkedEACount].source > maxVertex)
+            maxVertex = EA[checkedEACount].source;
+          if (EA[checkedEACount].destination > maxVertex)
+            maxVertex = EA[checkedEACount].destination;
+          checkedEACount++;
+        }
+
+        if (index < uncheckedEDCount && !EDflag[index]) {
+          ED[checkedEDCount].source = uncheckedED[index].first;
+          ED[checkedEDCount].destination = uncheckedED[index].second;
+          checkedEDCount++;
+        }
+      }
+
+      // ensure there are no duplicates within the edges to add/delete
+      if (edgeValidityFlag && simpleFlag) {
+        quickSort(EA, checkedEACount, edgeBothCmp());
+        quickSort(ED, checkedEDCount, edgeBothCmp());
+        checkedEACount = removeDuplicates(EA, checkedEACount, numEdges,
+                                          symmetric, debugFlag);
+        checkedEDCount = removeDuplicates(ED, checkedEDCount, numEdges,
+                                          symmetric, debugFlag);
+      }
+      free(EAflag);
+      free(EDflag);
+      time_other += timer1.stop();
+
+    } while (fixedBatchFlag && !streamClosed &&
+             (checkedEACount + checkedEDCount) < numEdges);
+
+    timer1.start();
+    free(uncheckedEA);
+    free(uncheckedED);
+    free(edgesReceived);
+    time_other += timer1.stop();
+    return make_tuple(edgeArray(EA, checkedEACount, maxVertex),
+                      edgeArray(ED, checkedEDCount, 0), edgesRead,
+                      cancelledEdges);
+  }
+
+  tuple<edgeArray, edgeArray, long, long>
+  getNewEdgesFromFile2(ifstream &inputFile, long numEdges, graph<vertex> GA,
+                      bool symmetric, bool simpleFlag, bool fixedBatchFlag,
+                      bool edgeValidityFlag, bool debugFlag,
+                      bool &streamClosed, double& time_other) {
+    if (numEdges == 0) {
+      return make_tuple(edgeArray(nullptr, 0, 0), edgeArray(nullptr, 0, 0), 0,
+                        0);
+    }
+    long edgesToRead = numEdges;
+
+    edge *EA = newA(edge, numEdges);
+    edge *ED = newA(edge, numEdges);
+    
+    //char edgeType;
+    string line;
+    vector<string> tokens;
+    long lineCount = 0;
+    uintV maxVertex = 0;
+
+    intPair *uncheckedEA = newA(intPair, numEdges);
+    intPair *uncheckedED = newA(intPair, numEdges);
+    long uncheckedEACount = 0;
+    long uncheckedEDCount = 0;
+    long uncheckedEACountOrig = 0;
+    long uncheckedEDCountOrig = 0;
+    long edgesRead = numEdges;
+
+    long checkedEACount = 0;
+    long checkedEDCount = 0;
+    long cancelledEdges = 0;
+
+    timer timer1;
+    StreamEdge *edgesReceived = newA(StreamEdge, numEdges);
+    cout << "Batch Size: " << numEdges << endl;
+    do {
+      edgesToRead = edgesToRead - checkedEDCount - checkedEACount;
+      if (debugFlag) {
+        cout << "Edges Added: " << checkedEACount << endl;
+        cout << "Edges Deleted: " << checkedEDCount << endl;
+        cout << "Edges to be Read: " << edgesToRead << endl;
+      }
+      uncheckedEACount = 0;
+      uncheckedEDCount = 0;
+    
+      //--------------
+    status_t status  = ubatch->create_mbatch();
+    if (0 == ubatch->reader_archive) {
+        assert(0);
+    }
+
+    vsnapshot_t* startv = ubatch->get_archived_vsnapshot();
+
+    if (startv) {
+        startv = startv->get_prev();
+    } else {
+        startv = ubatch->get_oldest_vsnapshot();
+    }
+
+    vsnapshot_t* endv   = ubatch->get_to_vsnapshot();
+    blog_t* blog = ubatch->blog;
+    
+    vid_t src, dst;
+    index_t tail, marker, index;
+    edge_t* edge, *edges;
+    vid_t v_count = n; //typekv->get_type_vcount(0);
+    do {
+        edges = blog->blog_beg;
+        tail = startv->tail;
+        marker = startv->marker;
+        for (index_t i = tail; i < marker; ++i) {
+            index = (i & blog->blog_mask);
+            edge = (edge_t*)((char*)edges + index*ubatch->edge_size);
+            src = edge->src_id;
+            dst = TO_SID(edge->get_dst());
+            
+            assert(TO_SID(src) < v_count);
+            assert(dst < v_count);
+            if (IS_DEL(src)) {//deletion case
+                uncheckedED[uncheckedEDCount] = make_pair(TO_VID(src), dst);
+                uncheckedEDCount++;
+            } else {
+                assert(src < v_count);
+                uncheckedEA[uncheckedEACount] = make_pair(src, dst);
+                uncheckedEACount++;
+            }
+        }
+    } while (startv != endv);
+    ubatch->update_marker();
+      //--------------
 
       //----
       timer1.start();
