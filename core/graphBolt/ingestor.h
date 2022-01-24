@@ -535,7 +535,7 @@ public:
     timer1.start();
     tie(edge_additions, edge_deletions_temp, num_edges_read_from_file,
         num_cancelled_edges) =
-        getNewEdgesFromFile2(stream_file, max_batch_size, my_graph,
+        getNewEdgesFromFile(stream_file, max_batch_size, my_graph,
                             my_graph.isSymmetric(), simple_flag,
                             fixed_batch_flag, enforce_edge_validity_flag,
                             debug_flag, stream_closed, time_other);
@@ -836,7 +836,7 @@ public:
   }
 
   tuple<edgeArray, edgeArray, long, long>
-  getNewEdgesFromFile2(ifstream &inputFile, long numEdges, graph<vertex> GA,
+  getNewEdgesFromFile_gbench(ifstream &inputFile, long numEdges, graph<vertex> GA,
                       bool symmetric, bool simpleFlag, bool fixedBatchFlag,
                       bool edgeValidityFlag, bool debugFlag,
                       bool &streamClosed, double& time_other) {

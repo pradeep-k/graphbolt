@@ -62,6 +62,7 @@ status_t create_adjacency_snapshot(ubatch_t* ubatch)
 
 int main(int argc, char** argv)
 {
+    //In the processNextBatch call _gbench version of getNewEdgesFromFile.
     commandLine P(argc, argv);
     char *iFile = P.getArgument(0);
     bool symmetric = P.getOptionValue("-s");
