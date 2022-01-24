@@ -10,10 +10,11 @@ using std::min;
 typedef vid_t level_t;
 
 
+static level_t MAX_LEVEL = -2L;
 static vid_t MAX_VID = -1L;
-static level_t MAX_LEVEL = -1L;
 
 typedef bool (*reduce_fn_t)(level_t&, level_t level, int weight);
+typedef bool (*reduce_pfn_t)(level_t*, level_t level, int weight);
 typedef bool (*adjust_fn_t)(vid_t, level_t&, level_t level);
 
 status_t create_adjacency_snapshot(ubatch_t* ubatch);
@@ -31,7 +32,7 @@ template <class T>
 index_t stream_bfs_3(gview_t* viewh, Bitmap* all_bmap, vid_t osrc); 
 
 inline bool bfs_op(level_t& status, level_t level, int weight) {
-    if(level < status) {
+    if( status > level) {
         status = level;
         return true;
     }
@@ -39,7 +40,7 @@ inline bool bfs_op(level_t& status, level_t level, int weight) {
 }
 
 inline bool bfs_adjust(vid_t vid, level_t& status, level_t level) {
-    if(level >= status) {
+    if(status <= level ) {
         status = MAX_LEVEL;
         return true;
     }
@@ -54,6 +55,16 @@ inline bool bfs_reduce(level_t& status, level_t level, int weight) {
     return false;
 }
 
+inline bool bfs_reduce_atomic(level_t* status, level_t level, int weight) {
+    level_t old_level; 
+    do {
+        old_level = *status;
+        if (old_level <= level + 1) return false;
+    } while(!__sync_bool_compare_and_swap(status, old_level, level+1));
+
+    return true;
+}
+
 
 struct bfs_info_t {
     vid_t*   parent;
@@ -64,6 +75,7 @@ struct bfs_info_t {
     vid_t*   vids;
     reduce_fn_t op_fn;
     reduce_fn_t reduce_fn;
+    reduce_pfn_t reduce_fn_atomic;
     adjust_fn_t adjust_fn;
     vid_t    root;
 };
@@ -97,7 +109,12 @@ bfs_info_t* init_bfs(gview_t* viewh, bool symm = true)
     level_t* status = (level_t*)malloc(v_count*sizeof(level_t));
     
     memset(parent, 255, v_count*sizeof(vid_t));
-    memset(status, 255, v_count*sizeof(level_t));
+    //memset(status, 255, v_count*sizeof(level_t));
+
+    #pragma omp parallel for
+    for (vid_t v = 0; v < v_count; ++v) {
+        status[v] = MAX_LEVEL;
+    }
     
     bfs_info->parent = parent;
     
@@ -113,6 +130,7 @@ bfs_info_t* init_bfs(gview_t* viewh, bool symm = true)
     }
     bfs_info->op_fn = bfs_op;
     bfs_info->reduce_fn = bfs_reduce;
+    bfs_info->reduce_fn_atomic = bfs_reduce_atomic;
     bfs_info->adjust_fn = bfs_adjust;
     viewh->set_algometa(bfs_info);
     cout << "root:" << bfs_info->root << endl;
@@ -121,7 +139,7 @@ bfs_info_t* init_bfs(gview_t* viewh, bool symm = true)
 
 //Only for sstream based view: Ddir
 template <class T> 
-index_t stream_bfs_1a(gview_t* viewh, Bitmap* rbitmap, Bitmap* all_bmap, vid_t osrc)
+index_t stream_bfs_1ddir(gview_t* viewh, Bitmap* rbitmap, Bitmap* all_bmap, vid_t osrc)
 {
     //vid_t v_count = viewh->get_vcount();
     bfs_info_t* bfs_info = (bfs_info_t*)viewh->get_algometa();
@@ -160,7 +178,7 @@ index_t stream_bfs_1a(gview_t* viewh, Bitmap* rbitmap, Bitmap* all_bmap, vid_t o
 
 //Only for sstream based views: Udir
 template <class T>
-index_t stream_bfs_1b(gview_t* viewh, Bitmap* rbitmap, Bitmap* all_bmap) 
+index_t stream_bfs_1udir(gview_t* viewh, Bitmap* rbitmap, Bitmap* all_bmap) 
 {
     //vid_t v_count = viewh->get_vcount();
     bfs_info_t* bfs_info = (bfs_info_t*)viewh->get_algometa();
@@ -186,10 +204,6 @@ index_t stream_bfs_1b(gview_t* viewh, Bitmap* rbitmap, Bitmap* all_bmap)
         v =  TO_VID(get_dst(edges+e));
         is_del = IS_DEL(get_src(edges[e]));
 
-        /**********if the view does not set them **************/
-        bitmap_out->set_bit_atomic(v);
-        bitmap_out->set_bit_atomic(nebr);
-        /***********************/
         if ((false == is_del) || (rstatus[v] == MAX_LEVEL)) continue;
             
         parent = bfs_info->parent[v];
@@ -210,6 +224,88 @@ index_t stream_bfs_1b(gview_t* viewh, Bitmap* rbitmap, Bitmap* all_bmap)
     return frontiers;
 }
 
+//Only for sstream based views: Udir
+template <class T>
+index_t stream_bfs_5udir(gview_t* viewh) 
+{
+    vid_t v_count = viewh->get_vcount();
+    bfs_info_t* bfs_info = (bfs_info_t*)viewh->get_algometa();
+    level_t* lstatus = bfs_info->lstatus;
+    level_t* rstatus = bfs_info->rstatus;
+    index_t frontiers = 0;
+    
+    edgeT_t<T>* edges = 0;
+    index_t edge_count = viewh->get_new_edges(edges);
+    #pragma omp parallel num_threads(THD_COUNT) reduction(+:frontiers)
+    {
+    vid_t parent;
+    vid_t src;
+    vid_t dst;
+    level_t src_level, dst_level;
+    bool is_del = false;
+
+    //1
+    #pragma omp for schedule (dynamic, 1024) nowait
+    for (index_t e = 0; e < edge_count; ++e) {
+        src = TO_VID(get_src(edges[e]));
+        dst =  TO_VID(get_dst(edges+e));
+        is_del = IS_DEL(get_src(edges[e]));
+        src_level = rstatus[src];
+        dst_level = rstatus[dst];
+        if (false == is_del) {
+            if (dst_level > src_level + 1) {
+                rstatus[dst] = src_level + 1;
+                bfs_info->parent[dst] = src;
+                viewh->bitmap_out->set_bit_atomic(dst);
+            } else if (dst_level + 1 < src_level) {
+                rstatus[src] = dst_level + 1;
+                bfs_info->parent[src] = dst;
+                viewh->bitmap_out->set_bit_atomic(src);
+            }
+        }
+    }
+    }
+    return 0;
+}
+
+//Only for sstream based views: ddir
+template <class T>
+index_t stream_bfs_5ddir(gview_t* viewh) 
+{
+    vid_t v_count = viewh->get_vcount();
+    bfs_info_t* bfs_info = (bfs_info_t*)viewh->get_algometa();
+    level_t* lstatus = bfs_info->lstatus;
+    level_t* rstatus = bfs_info->rstatus;
+    index_t frontiers = 0;
+    
+    edgeT_t<T>* edges = 0;
+    index_t edge_count = viewh->get_new_edges(edges);
+    #pragma omp parallel num_threads(THD_COUNT) reduction(+:frontiers)
+    {
+    vid_t parent;
+    vid_t src;
+    vid_t dst;
+    level_t src_level, dst_level;
+    bool is_del = false;
+
+    //1
+    #pragma omp for schedule (dynamic, 1024) nowait
+    for (index_t e = 0; e < edge_count; ++e) {
+        src = TO_VID(get_src(edges[e]));
+        dst =  TO_VID(get_dst(edges+e));
+        is_del = IS_DEL(get_src(edges[e]));
+        src_level = rstatus[src];
+        dst_level = rstatus[dst];
+        if ((false == is_del) && (dst_level > src_level + 1)) {
+            rstatus[dst] = src_level + 1;
+            bfs_info->parent[dst] = src;
+            viewh->bitmap_out->set_bit_atomic(dst);
+        }
+    }
+    }
+    return 0;
+}
+
 template <class T> 
 void do_streambfs1(gview_t* viewh, Bitmap* bmap_out, Bitmap* bmap_in, Bitmap* all_bmap)
 {
@@ -226,9 +322,9 @@ void do_streambfs1(gview_t* viewh, Bitmap* bmap_out, Bitmap* bmap_in, Bitmap* al
 
     double start = mywtime();
     if (viewh->is_ddir()) {
-        frontiers = stream_bfs_1a<T>(viewh, bmap_in, all_bmap, 0);
+        frontiers = stream_bfs_1ddir<T>(viewh, bmap_in, all_bmap, 0);
     } else {
-        frontiers = stream_bfs_1b<T>(viewh, bmap_in, all_bmap);
+        frontiers = stream_bfs_1udir<T>(viewh, bmap_in, all_bmap);
     }
     total += frontiers;
     double end1 = mywtime();
@@ -254,6 +350,12 @@ void do_streambfs1(gview_t* viewh, Bitmap* bmap_out, Bitmap* bmap_in, Bitmap* al
     }
 
     double end3 = mywtime();
+    //5.
+    if (viewh->is_ddir()) {
+        stream_bfs_5ddir<T>(viewh);
+    } else {
+        stream_bfs_5udir<T>(viewh);
+    }
     //4.
     //switch to traditional incremental version
     Bitmap* lbitmap = all_bmap;//viewh->bitmap_out;
@@ -268,9 +370,11 @@ void do_streambfs1(gview_t* viewh, Bitmap* bmap_out, Bitmap* bmap_in, Bitmap* al
     } while (frontiers);
     double end4 = mywtime();
 
-    //cout << end1 - start << ":" << end2 - end1 << ":" << end3 - end2 << ":" << end4 - end3 << "::" << end4 - start << endl;
+    cout << end1 - start << ":" << end2 - end1 << ":" << end3 - end2 << ":" << end4 - end3 << "::" << end4 - start << endl;
 }
 
+//pull bfs for vertices which has deleted parents
+//mark its children so that they can process them
 template <class T>
 index_t stream_bfs_2a1(gview_t* viewh, Bitmap* lbitmap, Bitmap* rbitmap, vid_t osrc) 
 {
@@ -285,7 +389,7 @@ index_t stream_bfs_2a1(gview_t* viewh, Bitmap* lbitmap, Bitmap* rbitmap, vid_t o
         int weight = 1;
         int w = 0;
         degree_t adj_count = 0;
-        vid_t new_parent = -1L;
+        vid_t new_parent = MAX_VID;
         vid_t nebr;
         level_t nebr_level = MAX_LEVEL;
         //1b
@@ -326,6 +430,7 @@ index_t stream_bfs_2a1(gview_t* viewh, Bitmap* lbitmap, Bitmap* rbitmap, vid_t o
     return frontiers;
 }
 
+//simply mark the children of a vertex so that can seek thier new parent
 template <class T>
 index_t stream_bfs_2b(gview_t* viewh, Bitmap* lbitmap, Bitmap* rbitmap, Bitmap* all_bmap, vid_t osrc) 
 {
@@ -374,7 +479,7 @@ index_t stream_bfs_3(gview_t* viewh, Bitmap* all_bmap, vid_t osrc)
         int weight = 1;
         int w = 0;
         degree_t adj_count = 0;
-        vid_t new_parent = -1L;
+        vid_t new_parent = MAX_VID;
         vid_t nebr;
         level_t nebr_level = MAX_LEVEL;
         #pragma omp for schedule (dynamic, 1024) nowait
@@ -430,7 +535,7 @@ index_t stream_bfs_4(gview_t* viewh, Bitmap* lbitmap, Bitmap* rbitmap, vid_t osr
                 sid = TO_VID(get_sid(*dst));
                 weight = get_weight_int(dst); 
 
-                if (bfs_info->reduce_fn(rstatus[sid], level, weight)) {
+                if (bfs_info->reduce_fn_atomic(rstatus+sid, level, weight)) {
                     bfs_info->parent[sid] = v + osrc; 
                     rbitmap->set_bit_atomic(sid);
                     ++frontiers;
@@ -505,14 +610,14 @@ void* stream_serial_bfs_del(void* viewh)
         ++update_count;
 	    
         do_streambfs1<T>(sstreamh, &bmap_out1, &bmap_in1, &all_bmap1);
-        print_bfs_summary(bfs_info->lstatus, v_count);
+        //print_bfs_summary(bfs_info->lstatus, v_count);
         end2 = mywtime();
         
         //cout << "BFS Time at Batch " << update_count << " = " << end - start << endl;
         cout << update_count
              << ":" << sstreamh->get_snapmarker()
              << ":" << end - start << ":" << end1 - end  
-             << ":" << end2 - end1 << endl;
+             << ":" << end2 - end1 << endl << endl;
     } 
     double endn = mywtime();
     print_bfs_summary(bfs_info->lstatus, v_count);
