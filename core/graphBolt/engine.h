@@ -22,12 +22,17 @@
 #ifndef KICKSTARTER_ENGINE_H
 #define KICKSTARTER_ENGINE_H
 
-#include "../common/bitsetscheduler.h"
-#include "../common/utils.h"
-#include "ingestor.h"
-#include <vector>
+#include "bitsetscheduler.h"
+#include "parallel.h"
+#include "view_interface.h"
+#include "bitmap.h"
+#include <fstream>
+#include <iostream>
 
-#define MAX_LEVEL 65535
+using std::ofstream;
+using std::ostream;
+
+#define MAX_LEVEL1 65535
 #define MAX_PARENT 4294967295
 
 #ifdef EDGEDATA
@@ -43,7 +48,7 @@ EdgeData emptyEdgeData;
 // ======================================================================
 // Set the initial value of the vertex
 template <class VertexValueType, class GlobalInfoType>
-inline void initializeVertexValue(const uintV &v,
+inline void initializeVertexValue(const vid_t &v,
                                   VertexValueType &v_vertex_value,
                                   const GlobalInfoType &global_info);
 
@@ -53,7 +58,7 @@ inline void initializeVertexValue(const uintV &v,
 // Return whether a vertex should be active when the processing starts. For
 // BFS/SSSP, only source vertex returns true. For CC, all vertices return true.
 template <class GlobalInfoType>
-inline bool frontierVertex(const uintV &v, const GlobalInfoType &global_info);
+inline bool frontierVertex(const vid_t &v, const GlobalInfoType &global_info);
 
 // ======================================================================
 // EDGE FUNCTION
@@ -62,7 +67,7 @@ inline bool frontierVertex(const uintV &v, const GlobalInfoType &global_info);
 // Return false if the value from u should not be use to update the value of v.
 // Return true otherwise.
 template <class VertexValueType, class EdgeDataType, class GlobalInfoType>
-inline bool edgeFunction(const uintV &u, const uintV &v,
+inline bool edgeFunction(const vid_t &u, const vid_t &v,
                          const EdgeDataType &edge_data,
                          const VertexValueType &u_value,
                          VertexValueType &v_value, GlobalInfoType &global_info);
@@ -81,18 +86,17 @@ inline bool shouldPropagate(const VertexValueType &old_value,
 // HELPER FUNCTIONS
 // ======================================================================
 template <class GlobalInfoType>
-void printAdditionalData(ofstream &output_file, const uintV &v,
+void printAdditionalData(ofstream &output_file, const vid_t &v,
                          GlobalInfoType &info);
 
 // ======================================================================
 // KICKSTARTER ENGINE
 // ======================================================================
-template <class vertex, class VertexValueType, class GlobalInfoType>
+template <class T1, class VertexValueType, class GlobalInfoType>
 class KickStarterEngine {
 
 public:
-  graph<vertex> &my_graph;
-  commandLine config;
+  gview_t* my_graph;
 
   // Current Graph graph
   // number of vertices in current graph
@@ -105,10 +109,10 @@ public:
   GlobalInfoType global_info_old;
 
   template <class T> struct DependencyData {
-    uintV parent;
+    vid_t parent;
     T value;
     uint16_t level;
-    DependencyData() : level(MAX_LEVEL), value(), parent(MAX_PARENT) {}
+    DependencyData() : level(MAX_LEVEL1), value(), parent(MAX_PARENT) {}
 
     DependencyData(uint16_t _level, T _value, uint32_t _parent)
         : level(_level), value(_value), parent(_parent) {}
@@ -118,7 +122,7 @@ public:
 
     void reset() {
       parent = MAX_PARENT;
-      level = MAX_LEVEL;
+      level = MAX_LEVEL1;
     }
 
     inline bool operator==(const DependencyData &rhs) {
@@ -152,22 +156,19 @@ public:
   DependencyData<VertexValueType> *dependency_data_old;
 
   // TODO : Replace with more efficient vertexSubset using bitmaps
-  bool *frontier;
-  bool *all_affected_vertices;
-  bool *changed;
+  Bitmap frontier;
+  Bitmap changed;
+  Bitmap all_affected_vertices;
 
   BitsetScheduler active_vertices_bitset;
 
-  // Stream Ingestor
-  Ingestor<vertex> ingestor;
   int current_batch;
 
-  KickStarterEngine(graph<vertex> &_my_graph, GlobalInfoType &_global_info,
-                    commandLine _config)
+  KickStarterEngine(gview_t* _my_graph, GlobalInfoType &_global_info)
       : my_graph(_my_graph), global_info(_global_info), global_info_old(),
-        config(_config), ingestor(_my_graph, _config), current_batch(0),
-        active_vertices_bitset(my_graph.n) {
-    n = my_graph.n;
+        current_batch(0),
+        active_vertices_bitset(my_graph->get_vcount()) {
+    n = my_graph->get_vcount();
     n_old = 0;
   }
 
@@ -227,28 +228,24 @@ public:
   // VERTEX SUBSETS USED BY THE ENGINE
   // ======================================================================
   void createVertexSubsets() {
-    frontier = newA(bool, n);
-    all_affected_vertices = newA(bool, n);
-    changed = newA(bool, n);
+    frontier.init(n);
+    changed.init(n);
+    all_affected_vertices.init(n);
   }
   void resizeVertexSubsets() {
-    frontier = renewA(bool, frontier, n);
-    all_affected_vertices = renewA(bool, all_affected_vertices, n);
-    changed = renewA(bool, changed, n);
-    initVertexSubsets(n_old, n);
+    //frontier = renewA(bool, frontier, n);
+    //all_affected_vertices = renewA(bool, all_affected_vertices, n);
+    //changed = renewA(bool, changed, n);
+    //initVertexSubsets(n_old, n);
   }
   void freeVertexSubsets() {
-    deleteA(frontier);
-    deleteA(all_affected_vertices);
-    deleteA(changed);
   }
   void initVertexSubsets() { initVertexSubsets(0, n); }
   void initVertexSubsets(long start_index, long end_index) {
-    parallel_for(long j = start_index; j < end_index; j++) {
+    /*parallel_for(long j = start_index; j < end_index; j++) {
       frontier[j] = 0;
-      all_affected_vertices[j] = 0;
       changed[j] = 0;
-    }
+    }*/
   }
 
   void processVertexAddition(long maxVertex) {
@@ -259,46 +256,12 @@ public:
     resizeVertexSubsets();
   }
 
-  void testPrint() {
-    cout << setprecision(VAL_PRECISION);
-    for (auto curr : debug_vertices) {
-      cout << "Vertex " << curr << "\n";
-      cout << "Indegree " << my_graph.V[curr].getInDegree() << "\n";
-      cout << "Outdegree " << my_graph.V[curr].getOutDegree() << "\n";
-      cout << "DependencyData<VertexValueType> " << dependency_data[curr]
-           << "\n";
-      cout << "DependencyDataOld " << dependency_data_old[curr] << "\n";
-    }
-  }
-
   void printOutput() {
-    string output_file_path = config.getOptionValue("-outputFile", "/tmp/");
-    bool should_print = true;
-    if (output_file_path.compare("/tmp/") == 0) {
-      should_print = false;
-    }
-    if (should_print) {
-      string curr_output_file_path =
-          output_file_path + to_string(current_batch);
-      std::cout << "Printing to file : " << curr_output_file_path << "\n";
-      ofstream output_file;
-      output_file.open(curr_output_file_path, ios::out);
-      output_file << fixed;
-      output_file << setprecision(VAL_PRECISION2);
-      for (uintV v = 0; v < n; v++) {
-        output_file << v << " " << my_graph.V[v].getInDegree() << " "
-                    << my_graph.V[v].getOutDegree() << " ";
-        printAdditionalData(output_file, v, global_info);
-        output_file << dependency_data[v] << "\n";
-      }
-    }
-    /****/
-    
     int level = 0;
     int vid_count = 0;
     do {
         vid_count = 0;
-        for (uintV v = 0; v < n; v++) {
+        for (vid_t v = 0; v < n; v++) {
             if (dependency_data[v].level == level) {
                 ++vid_count;
                 if (level == 0) cout << "root = " << v << endl;
@@ -314,22 +277,10 @@ public:
     current_batch++;
   }
 
-  void run() {
-    initialCompute();
-    ingestor.validateAndOpenFifo();
-    while (ingestor.processNextBatch()) {
-      edgeArray &edge_additions = ingestor.getEdgeAdditions();
-      edgeArray &edge_deletions = ingestor.getEdgeDeletions();
-      deltaCompute(edge_additions, edge_deletions);
-    }
-  }
-
   void initialCompute() {
-    timer t1, full_timer;
-    full_timer.start();
     active_vertices_bitset.reset();
 
-    parallel_for(uintV v = 0; v < n; v++) {
+    parallel_for(vid_t v = 0; v < n; v++) {
       if (frontierVertex(v, global_info)) {
         active_vertices_bitset.schedule(v);
         dependency_data[v].level = 0;
@@ -338,13 +289,12 @@ public:
     }
 
     traditionalIncrementalComputation();
-    cout << "Initial graph processing : " << full_timer.stop() << "\n";
-    printOutput();
+    //printOutput();
   }
 
   // TODO : Write a lock based reduce function. Add functionality to use the
   // lock based reduce function depending on the size of DependendencyData              
-  bool reduce(const uintV &u, const uintV &v, const EdgeData &edge_data,
+  bool reduce(const vid_t &u, const vid_t &v, const EdgeData &edge_data,
               const DependencyData<VertexValueType> &u_data,
               DependencyData<VertexValueType> &v_data, GlobalInfoType &info) {
     DependencyData<VertexValueType> newV, oldV;
@@ -370,18 +320,47 @@ public:
     } while (!CAS(&v_data, oldV, newV));
     return update_successful;
   }
+  
+  bool reduce_noatomic(const vid_t &u, const vid_t &v, const EdgeData &edge_data,
+              const DependencyData<VertexValueType> &u_data,
+              DependencyData<VertexValueType> &v_data, GlobalInfoType &info) {
+    DependencyData<VertexValueType> newV, oldV;
+    DependencyData<VertexValueType> incoming_value_curr = u_data;
+
+    bool ret = edgeFunction(u, v, edge_data, incoming_value_curr.value, newV.value, info);
+    if (!ret) {
+      return false;
+    }
+    newV.level = incoming_value_curr.level + 1;
+    newV.parent = u;
+
+    bool update_successful = true;
+      oldV = v_data;
+      // If oldV is lesser than the newV computed frm u, we should update.
+      // Otherwise, break
+      if ((shouldPropagate(oldV.value, newV.value, global_info)) ||
+          ((oldV.value == newV.value) && (oldV.level <= newV.level))) {
+        return  false;
+      }
+      v_data = newV;
+    return update_successful;
+  }
 
   int traditionalIncrementalComputation() {
     while (active_vertices_bitset.anyScheduledTasks()) {
       active_vertices_bitset.newIteration();
-      parallel_for(uintV u = 0; u < n; u++) {
+
+      parallel_for(vid_t u = 0; u < n; u++) {
         if (active_vertices_bitset.isScheduled(u)) {
           // process all its outNghs
-          intE outDegree = my_graph.V[u].getOutDegree();
+          nebr_reader_t adj_list;
+          T1* dst;
+          intE outDegree = my_graph->get_nebrs_out(u, adj_list) ;//V[u].getOutDegree();
           granular_for(i, 0, outDegree, (outDegree > 1024), {
-            uintV v = my_graph.V[u].getOutNeighbor(i);
+            dst = adj_list.get_item<T1>(i);
+            vid_t v = TO_VID(get_sid(*dst));
 #ifdef EDGEDATA
-            EdgeData *edge_data = my_graph.V[u].getOutEdgeData(i);
+            EdgeData *edge_data = my_graph->V[u].getOutEdgeData(i);
 #else
             EdgeData *edge_data = &emptyEdgeData;
 #endif
@@ -396,76 +375,164 @@ public:
     }
   }
 
-  void deltaCompute(edgeArray &edge_additions, edgeArray &edge_deletions) {
-    timer iteration_timer, phase_timer, full_timer;
-    double misc_time, copy_time, phase_time, iteration_time;
-    full_timer.start();
+  void bfs_2ddir() {
+    edge_t*  tmp = 0;
+    index_t edge_count = my_graph->get_new_edges1(tmp);
+    edgeT_t<T1>* edges = (edgeT_t<T1>*)tmp;
 
+    parallel_for(long i = 0; i < edge_count; i++) {
+      vid_t  source     = TO_VID(get_src(edges[i]));
+      vid_t destination =  TO_VID(get_dst(edges+i));
+      bool is_del = IS_DEL(get_src(edges[i]));
+      if (is_del) {
+          if (dependency_data[destination].parent == source) {
+            dependency_data[destination].reset();
+            initializeVertexValue<VertexValueType, GlobalInfoType>(
+                destination, dependency_data[destination].value, global_info);
+            active_vertices_bitset.schedule(destination);
+            all_affected_vertices.set_bit_atomic(destination);
+          }
+      }
+    }
+  }
+  
+  void bfs_2udir() {
+    edge_t*  tmp = 0;
+    index_t edge_count = my_graph->get_new_edges1(tmp);
+    edgeT_t<T1>* edges = (edgeT_t<T1>*)tmp;
+
+    parallel_for(long i = 0; i < edge_count; i++) {
+      vid_t  source     = TO_VID(get_src(edges[i]));
+      vid_t destination =  TO_VID(get_dst(edges+i));
+      bool is_del = IS_DEL(get_src(edges[i]));
+      if (is_del) {
+          if (dependency_data[destination].parent == source) {
+            dependency_data[destination].reset();
+            initializeVertexValue<VertexValueType, GlobalInfoType>(
+                destination, dependency_data[destination].value, global_info);
+            active_vertices_bitset.schedule(destination);
+            all_affected_vertices.set_bit_atomic(destination);
+          } else if (dependency_data[source].parent == destination) {
+            dependency_data[source].reset();
+            initializeVertexValue<VertexValueType, GlobalInfoType>(
+                source, dependency_data[source].value, global_info);
+            active_vertices_bitset.schedule(source);
+            all_affected_vertices.set_bit_atomic(source);
+          }
+      }
+    }
+  }
+  
+  void bfs_4ddir() {
+    edge_t*  tmp = 0;
+    index_t edge_count = my_graph->get_new_edges1(tmp);
+    edgeT_t<T1>* edges = (edgeT_t<T1>*)tmp;
+
+    parallel_for(long i = 0; i < edge_count; i++) {
+      vid_t  source     = TO_VID(get_src(edges[i]));
+      vid_t destination =  TO_VID(get_dst(edges+i));
+      bool is_del = IS_DEL(get_src(edges[i]));
+#ifdef EDGEDATA
+      EdgeData *edge_data = edge_additions.E[i].edgeData;
+#else
+      EdgeData *edge_data = &emptyEdgeData;
+#endif
+      if (false == is_del) {
+          bool ret = reduce(source, destination, *edge_data, dependency_data[source],
+                            dependency_data[destination], global_info);
+          if (ret) {
+            all_affected_vertices.set_bit_atomic(destination);
+          }
+      }
+    }
+  }
+  
+  void bfs_4udir() {
+    edge_t*  tmp = 0;
+    index_t edge_count = my_graph->get_new_edges1(tmp);
+    edgeT_t<T1>* edges = (edgeT_t<T1>*)tmp;
+
+    parallel_for(long i = 0; i < edge_count; i++) {
+      vid_t  source     = TO_VID(get_src(edges[i]));
+      vid_t destination =  TO_VID(get_dst(edges+i));
+      bool is_del = IS_DEL(get_src(edges[i]));
+#ifdef EDGEDATA
+      EdgeData *edge_data = edge_additions.E[i].edgeData;
+#else
+      EdgeData *edge_data = &emptyEdgeData;
+#endif
+      if (false == is_del) {
+          bool ret = reduce(source, destination, *edge_data, dependency_data[source],
+                            dependency_data[destination], global_info);
+          if (ret) {
+            all_affected_vertices.set_bit_atomic(destination);
+          }
+          ret = reduce(destination, source, *edge_data, dependency_data[destination],
+                            dependency_data[source], global_info);
+          if (ret) {
+            all_affected_vertices.set_bit_atomic(source);
+          }
+      }
+    }
+  }
+
+  void deltaCompute() {
     // Handle newly added vertices
     n_old = n;
-    if (edge_additions.maxVertex >= n) {
-      processVertexAddition(edge_additions.maxVertex);
-    }
 
     // Reset values before incremental computation
     active_vertices_bitset.reset();
-    parallel_for(uintV v = 0; v < n; v++) {
-      frontier[v] = 0;
-      // all_affected_vertices is used only for switching purposes
-      all_affected_vertices[v] = 0;
-      changed[v] = 0;
+    // all_affected_vertices is used only for switching purposes
+    all_affected_vertices.reset();
+    frontier.reset();
+    changed.reset();
+    parallel_for(vid_t v = 0; v < n; v++) {
       // Make a copy of the old dependency data
       dependency_data_old[v] = dependency_data[v];
     }
-
     // ======================================================================
     // PHASE 1 - Update global_info
     // ======================================================================
     // Pretty much nothing is going to happen here. But, maintaining consistency with GraphBolt
     global_info_old.copy(global_info);
-    global_info.processUpdates(edge_additions, edge_deletions);
 
     // ======================================================================
     // PHASE 2 = Identify vertex values affected by edge deletions
     // ======================================================================
-    bool frontier_not_empty = false;
-    parallel_for(long i = 0; i < edge_deletions.size; i++) {
-      uintV source = edge_deletions.E[i].source;
-      uintV destination = edge_deletions.E[i].destination;
-      if (dependency_data[destination].parent == source) {
-        dependency_data[destination].reset();
-        initializeVertexValue<VertexValueType, GlobalInfoType>(
-            destination, dependency_data[destination].value, global_info);
-        active_vertices_bitset.schedule(destination);
-        all_affected_vertices[destination] = true;
-      }
+    if (my_graph->is_ddir()) {
+        bfs_2ddir();
+    } else {
+        bfs_2udir();
     }
 
     // ======================================================================
     // PHASE 3 - Trimming phase
     // ======================================================================
-    bool should_switch_now = false;
-    bool use_delta = true;
     while (active_vertices_bitset.anyScheduledTasks()) {
 
       // For all the vertices 'v' affected, update value of 'v' from its
       // inNghs, such that level(v) > level(inNgh) in the old dependency tree
       active_vertices_bitset.newIteration();
-      parallel_for(uintV v = 0; v < n; v++) {
+
+      parallel_for(vid_t v = 0; v < n; v++) {
         if (active_vertices_bitset.isScheduled(v)) {
-          intE inDegree = my_graph.V[v].getInDegree();
+          nebr_reader_t adj_list;
+          T1* dst;
+          intE inDegree = my_graph->get_nebrs_in(v, adj_list);
           DependencyData<VertexValueType> v_value_old = dependency_data[v];
+
           parallel_for(intE i = 0; i < inDegree; i++) {
-            uintV u = my_graph.V[v].getInNeighbor(i);
+            dst = adj_list.get_item<T1>(i);
+            vid_t u = TO_VID(get_sid(*dst));
             // Process inEdges with smallerLevel than currentVertex.
             if (dependency_data_old[v].level > dependency_data_old[u].level) {
 #ifdef EDGEDATA
-              EdgeData *edge_data = my_graph.V[v].getInEdgeData(i);
+              EdgeData *edge_data = my_graph->V[v].getInEdgeData(i);
 #else
               EdgeData *edge_data = &emptyEdgeData;
 #endif
               bool ret =
-                  reduce(u, v, *edge_data, dependency_data[u], v_value_old, global_info);
+                  reduce_noatomic(u, v, *edge_data, dependency_data[u], v_value_old, global_info);
             }
           }
           // Evaluate the shouldReduce condition.. See if the new value is
@@ -474,19 +541,23 @@ public:
                                dependency_data[v].value, global_info)) ||
               (shouldPropagate(v_value_old.value, dependency_data[v].value,
                                global_info))) {
-            changed[v] = 1;
+            changed.set_bit(v);
           }
         }
       }
 
-      parallel_for(uintV v = 0; v < n; v++) {
-        if (changed[v]) {
-          changed[v] = 0;
+      parallel_for(vid_t v = 0; v < n; v++) {
+        if (changed.get_bit(v)) {
+          changed.reset_bit(v);
           // Push down in dependency tree
-          intE outDegree = my_graph.V[v].getOutDegree();
+          nebr_reader_t adj_list;
+          T1* dst;
+          intE outDegree = my_graph->get_nebrs_out(v, adj_list) ;//V[u].getOutDegree();
           DependencyData<VertexValueType> v_value = dependency_data[v];
+          
           parallel_for(intE i = 0; i < outDegree; i++) {
-            uintV w = my_graph.V[v].getOutNeighbor(i);
+            dst = adj_list.get_item<T1>(i);
+            vid_t w = TO_VID(get_sid(*dst));
             // Push the changes down only to its outNghs in the dependency
             // tree
             if (dependency_data[w].parent == v) {
@@ -501,7 +572,7 @@ public:
 
               // Update w's value based on u's value if needed
 #ifdef EDGEDATA
-              EdgeData *edge_data = my_graph.V[v].getOutEdgeData(i);
+              EdgeData *edge_data = my_graph->V[v].getOutEdgeData(i);
 #else
               EdgeData *edge_data = &emptyEdgeData;
 #endif
@@ -509,7 +580,7 @@ public:
 
               if ((oldV.value != newV.value) || (oldV.level != newV.level)) {
                 dependency_data[w] = newV;
-                all_affected_vertices[w] = true;
+                all_affected_vertices.set_bit_atomic(w);
 
                 if ((shouldPropagate(dependency_data_old[w].value, newV.value,
                                      global_info)) ||
@@ -517,31 +588,34 @@ public:
                   active_vertices_bitset.schedule(w);
                 }
                 if (shouldPropagate(oldV.value, newV.value, global_info)) {
-                  frontier[w] = 1;
+                  frontier.set_bit_atomic(w);
                 }
               }
             }
           }
         }
       }
-      bool *temp = changed;
-      changed = frontier;
-      frontier = temp;
+      changed.swap(&frontier);
     }
+    //===========================================
+    //==========================================
 
     // Pull once for all the affected vertices
-    parallel_for(uintV v = 0; v < n; v++) {
-      if (all_affected_vertices[v] == 1) {
-        intE inDegree = my_graph.V[v].getInDegree();
+    parallel_for(vid_t v = 0; v < n; v++) {
+      if (all_affected_vertices.get_bit(v) == true) {
+        nebr_reader_t adj_list;
+        T1* dst;
+        intE inDegree = my_graph->get_nebrs_in(v, adj_list);
         parallel_for(intE i = 0; i < inDegree; i++) {
-          uintV u = my_graph.V[v].getInNeighbor(i);
+            dst = adj_list.get_item<T1>(i);
+            vid_t u = TO_VID(get_sid(*dst));
 #ifdef EDGEDATA
-          EdgeData *edge_data = my_graph.V[v].getInEdgeData(i);
+          EdgeData *edge_data = my_graph->V[v].getInEdgeData(i);
 #else
           EdgeData *edge_data = &emptyEdgeData;
 #endif
           bool ret =
-              reduce(u, v, *edge_data, dependency_data[u], dependency_data[v], global_info);
+              reduce_noatomic(u, v, *edge_data, dependency_data[u], dependency_data[v], global_info);
         }
       }
     }
@@ -549,19 +623,10 @@ public:
     // ======================================================================
     // PHASE 4 - Process additions
     // ======================================================================
-    parallel_for(long i = 0; i < edge_additions.size; i++) {
-      uintV source = edge_additions.E[i].source;
-      uintV destination = edge_additions.E[i].destination;
-#ifdef EDGEDATA
-      EdgeData *edge_data = edge_additions.E[i].edgeData;
-#else
-      EdgeData *edge_data = &emptyEdgeData;
-#endif
-      bool ret = reduce(source, destination, *edge_data, dependency_data[source],
-                        dependency_data[destination], global_info);
-      if (ret) {
-        all_affected_vertices[destination] = true;
-      }
+    if (my_graph->is_ddir()) {
+        bfs_4ddir();
+    } else {
+        bfs_4udir();
     }
 
     // ======================================================================
@@ -569,14 +634,13 @@ public:
     // ======================================================================
     // For all affected vertices, start traditional processing
     active_vertices_bitset.reset();
-    parallel_for(uintV v = 0; v < n; v++) {
-      if (all_affected_vertices[v] == 1) {
+    parallel_for(vid_t v = 0; v < n; v++) {
+      if (all_affected_vertices.get_bit(v) == true) {
         active_vertices_bitset.schedule(v);
       }
     }
     traditionalIncrementalComputation();
 
-    cout << "Finished batch : " << full_timer.stop() << "\n\n";
     //printOutput();
   }
 };

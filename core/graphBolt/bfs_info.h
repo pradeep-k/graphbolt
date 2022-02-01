@@ -1,45 +1,17 @@
-// Copyright (c) 2020 Mugilan Mariappan, Joanna Che and Keval Vora.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights (to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to
-// permit persons to whom the Software is furnished to do so, subject to
-// the following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-// LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-// OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-// WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-#include "../core/common/utils.h"
-#include "../core/graphBolt/KickStarterEngine.h"
-#include "../core/main.h"
-#include <math.h>
-
-#define MAX_PARENT 4294967295
+#pragma once
 
 // ======================================================================
 // BFSINFO
 // ======================================================================
 class BfsInfo {
 public:
-  uintV source_vertex;
+  vid_t source_vertex;
 
   BfsInfo() : source_vertex(0) {}
 
-  BfsInfo(uintV _source_vertex) : source_vertex(_source_vertex) {}
+  BfsInfo(vid_t _source_vertex) : source_vertex(_source_vertex) {}
 
   void copy(const BfsInfo &object) { source_vertex = object.source_vertex; }
-
-  void processUpdates(edgeArray &edge_additions, edgeArray &edge_deletions) {}
 
   void cleanup() {}
 
@@ -50,7 +22,7 @@ public:
 // VERTEXVALUE INITIALIZATION
 // ======================================================================
 template <class VertexValueType, class GlobalInfoType>
-inline void initializeVertexValue(const uintV &v,
+inline void initializeVertexValue(const vid_t &v,
                                   VertexValueType &v_vertex_value,
                                   const GlobalInfoType &global_info) {
   if (v != global_info.source_vertex) {
@@ -64,7 +36,7 @@ inline void initializeVertexValue(const uintV &v,
 // ACTIVATE VERTEX FOR FIRST ITERATION
 // ======================================================================
 template <class GlobalInfoType>
-inline bool frontierVertex(const uintV &v, const GlobalInfoType &global_info) {
+inline bool frontierVertex(const vid_t &v, const GlobalInfoType &global_info) {
   if (v == global_info.source_vertex) {
     return true;
   } else {
@@ -77,7 +49,7 @@ inline bool frontierVertex(const uintV &v, const GlobalInfoType &global_info) {
 // ======================================================================
 template <class VertexValueType, class EdgeDataType, class GlobalInfoType>
 inline bool
-edgeFunction(const uintV &u, const uintV &v, const EdgeDataType &edge_weight,
+edgeFunction(const vid_t &u, const vid_t &v, const EdgeDataType &edge_weight,
              const VertexValueType &u_value, VertexValueType &v_value,
              GlobalInfoType &global_info) {
   if (u_value == 0) {
@@ -104,21 +76,6 @@ inline bool shouldPropagate(const VertexValueType &old_value,
 // HELPER FUNCTIONS
 // ======================================================================
 template <class GlobalInfoType>
-void printAdditionalData(ofstream &output_file, const uintV &v,
+void printAdditionalData(ofstream &output_file, const vid_t &v,
                          GlobalInfoType &info) {}
 
-// ======================================================================
-// COMPUTE FUNCTION
-// ======================================================================
-template <class vertex> void compute(graph<vertex> &G, commandLine config) {
-  long n = G.n;
-  int source_vertex = config.getOptionLongValue("-source", 0);
-  BfsInfo global_info(source_vertex);
-
-  cout << "Initializing engine ....\n";
-  KickStarterEngine<vertex, uint16_t, BfsInfo> engine(G, global_info, config);
-  engine.init();
-  cout << "Finished initializing engine\n";
-  engine.run();
-  engine.printOutput();
-}

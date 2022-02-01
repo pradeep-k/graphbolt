@@ -120,7 +120,7 @@ public:
   }
 
   void cleanup() {
-    cout << "Current_batch: " << current_batch << endl;
+    //cout << "Current_batch: " << current_batch << endl;
     if (current_batch > 0) {
       edge_additions.del();
       edge_deletions.del();
@@ -535,11 +535,11 @@ public:
     timer1.start();
     tie(edge_additions, edge_deletions_temp, num_edges_read_from_file,
         num_cancelled_edges) =
-        getNewEdgesFromFile(stream_file, max_batch_size, my_graph,
+        getNewEdgesFromFile_gbench(stream_file, max_batch_size, my_graph,
                             my_graph.isSymmetric(), simple_flag,
                             fixed_batch_flag, enforce_edge_validity_flag,
                             debug_flag, stream_closed, time_other);
-    cout << "Reading Time : " << timer1.stop() << endl;
+    //cout << "Reading Time : " << timer1.stop() << endl;
 
     if (stream_closed && num_edges_read_from_file == 0) {
       cout << "No Edges in Batch" << endl;
@@ -577,13 +577,14 @@ public:
     edge_additions = my_graph.addEdges(edge_additions, updated_vertices);
     addition_time += timer1.next();
 
+    /*
     cout << "Edge deletion time : " << deletion_time << "\n";
          //<< deletions_map_creation_time + timer1.next() << "\n";
     cout << "Edge addition time : " << addition_time << "\n";
     cout << "Edge Sorting+ time: " << time_other << "\n";
     cout << "Total Ingestion Time : " << deletion_time + addition_time + time_other << endl;
     cout << "Read+ Ingestion Time : " << fullTimer.stop() << endl;
-    
+    */
     if ((edge_additions.size > 0) || (edge_deletions.size > 0)) {
       return true;
     }
@@ -869,7 +870,7 @@ public:
 
     timer timer1;
     StreamEdge *edgesReceived = newA(StreamEdge, numEdges);
-    cout << "Batch Size: " << numEdges << endl;
+    //cout << "Batch Size: " << numEdges << endl;
     do {
       edgesToRead = edgesToRead - checkedEDCount - checkedEACount;
       if (debugFlag) {

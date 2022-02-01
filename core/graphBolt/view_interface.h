@@ -247,7 +247,7 @@ class gview_t {
 
 
 	}
-    inline index_t get_new_edges(edge_t*& a_new_edges) {
+    inline index_t get_new_edges1(edge_t*& a_new_edges) {
         a_new_edges = new_edges;
         return new_edge_count;
     }

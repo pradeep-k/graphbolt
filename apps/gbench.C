@@ -108,7 +108,7 @@ int main(int argc, char** argv)
         //If system support adjacency store snapshot, create thread for index creation
         // Run analytics in separte thread. If adjacency store is non-snapshot, do indexing and analytics in seq.
         index_t slide_sz = (1L << 16);
-        sstreamh = reg_sstream_view<symmetricVertex>(&G, ubatch, v_count, stream_serial_bfs_del<dst_id_t>, C_THREAD, slide_sz);
+        sstreamh = reg_sstream_view<symmetricVertex>(&G, ubatch, v_count, kickstarter_bfs_serial<dst_id_t>, C_THREAD, slide_sz);
     
         //perform micro batching here using ubatch pointer
         int64_t flags = SOURCE_BINARY;
@@ -134,7 +134,7 @@ int main(int argc, char** argv)
         //If system support adjacency store snapshot, create thread for index creation
         // Run analytics in separte thread. If adjacency store is non-snapshot, do indexing and analytics in seq.
         index_t slide_sz = (1L << 16);
-        sstreamh = reg_sstream_view<asymmetricVertex>(&G, ubatch, v_count, stream_serial_bfs_del<dst_id_t>, C_THREAD, slide_sz);
+        sstreamh = reg_sstream_view<asymmetricVertex>(&G, ubatch, v_count, kickstarter_bfs_serial<dst_id_t>, C_THREAD, slide_sz);
     
         //perform micro batching here using ubatch pointer
         int64_t flags = SOURCE_BINARY;
