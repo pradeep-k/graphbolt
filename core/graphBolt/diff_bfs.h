@@ -65,13 +65,42 @@ void* kickstarter_bfs_serial(void* viewh)
         end2 = mywtime();
         
         //cout << "BFS Time at Batch " << update_count << " = " << end - start << endl;
-        cout << update_count
-             << ":" << sstreamh->get_snapmarker()
-             << ":" << end - start << ":" << end1 - end  
-             << ":" << end2 - end1 << endl;
+        /*cout << update_count
+             //<< ":" << sstreamh->get_snapmarker()
+             //<< ":" << end - start 
+             << ":" << end1 - end  
+             << ":" << end2 - end1 << endl;*/
     } 
     double endn = mywtime();
     engine.printOutput();
+    cout << "update_count = " << update_count << "Time = "<< endn - startn << endl;
+    return 0;
+}
+
+void* test_ingestion(void* viewh)
+{
+    ubatch_t* ubatch = (ubatch_t*)(viewh);
+    
+    int update_count = 0;
+    status_t ret = eOK; 
+    double start, end, end1, end2;
+    
+    double startn = mywtime();
+    while (true) {
+        start = mywtime();
+        ret = create_adjacency_snapshot(ubatch);
+        end = mywtime();
+        
+        if (ret == eEndBatch) break;
+        ++update_count;
+        
+        cout << update_count
+             << ":" << end - start 
+             //<< ":" << end1 - end  
+             //<< ":" << end2 - end1 
+             << endl;
+    } 
+    double endn = mywtime();
     cout << "update_count = " << update_count << "Time = "<< endn - startn << endl;
     return 0;
 }

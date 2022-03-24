@@ -518,10 +518,10 @@ public:
 
   bool processNextBatch() {
     current_batch++;
-    if (current_batch > number_of_batches) {
+    /*if (current_batch > number_of_batches) {
       cout << "Hit Max Batch Size" << endl;
       return false;
-    }
+    }*/
     timer timer1, timer2, fullTimer;
     double time_other = 0;
     fullTimer.start();

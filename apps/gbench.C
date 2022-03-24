@@ -30,6 +30,7 @@ int64_t _arg = 1;//algo specific argument
 int _numtasks = 0, _rank = 0;
 int _numlogs = 1;
 
+index_t  nBATCH_SIZE = 16;//edge batching in edge log
 index_t  BATCH_SIZE = (1L << 16);//edge batching in edge log
 index_t  BATCH_MASK =  0xFFFF;
 index_t  BATCH_TIMEOUT = (-1L);
@@ -48,6 +49,7 @@ sid_t    INVALID_SID  = 0xFFFFFFFF;
 //run adjacency store creation here.
 status_t create_adjacency_snapshot(ubatch_t* ubatch)
 {
+    double start = mywtime();
     if (_dir == 1) {//directed
         Ingestor<asymmetricVertex>* ingestor = 
         (Ingestor<asymmetricVertex>*) gb_ingestor;
@@ -56,6 +58,12 @@ status_t create_adjacency_snapshot(ubatch_t* ubatch)
         Ingestor<symmetricVertex>* ingestor = 
         (Ingestor<symmetricVertex>*) gb_ingestor;
         ingestor->processNextBatch();
+    }
+    double end = mywtime();
+    //cout << ubatch->last_archived->id <<" "<< end - start << endl;
+
+    if (ubatch->last_archived->total_edges == ubatch->total_edges) {
+        return eEndBatch;
     }
     return eOK;
 }
@@ -68,7 +76,10 @@ int main(int argc, char** argv)
     bool symmetric = P.getOptionValue("-s");
     
     string idir = P.getOptionValue("-streamPath", "./data/");
-    size_t batch_size = P.getOptionLongValue("-nEdges", 65536);
+    //BATCH_SIZE = P.getOptionLongValue("-nEdges", 65536);
+    nBATCH_SIZE = P.getOptionLongValue("-batch-size", 16);
+    BATCH_SIZE = (1L << nBATCH_SIZE);
+    _arg = P.getOptionIntValue("-source", 1);
 
     // bool useExtraBufferSpace = P.getOptionValue("-buffer");
     bool simpleFlag = P.getOptionValue("-simple");
@@ -78,11 +89,9 @@ int main(int argc, char** argv)
     setCustomWorkers(n_workers);
     THD_COUNT = n_workers; 
 
-    cout << fixed;
-
     //Return ubatch pointer here.
     ubatch = new ubatch_t(sizeof(edge_t),  1);
-    ubatch->alloc_edgelog(20); // 1 Million edges
+    ubatch->alloc_edgelog(nBATCH_SIZE+1); // 1 Million edges
     ubatch->reg_archiving();
 
     
@@ -107,8 +116,12 @@ int main(int argc, char** argv)
         
         //If system support adjacency store snapshot, create thread for index creation
         // Run analytics in separte thread. If adjacency store is non-snapshot, do indexing and analytics in seq.
-        index_t slide_sz = (1L << 16);
+        pthread_t thread;
+        index_t slide_sz = BATCH_SIZE;
         sstreamh = reg_sstream_view<symmetricVertex>(&G, ubatch, v_count, kickstarter_bfs_serial<dst_id_t>, C_THREAD, slide_sz);
+        thread =  sstreamh->thread;
+
+        //if (0 != pthread_create(&thread, 0, test_ingestion, ubatch)) {assert(0);}
     
         //perform micro batching here using ubatch pointer
         int64_t flags = SOURCE_BINARY;
@@ -117,7 +130,7 @@ int main(int argc, char** argv)
         
         //Wait for threads to complete
         void* ret;
-        pthread_join(sstreamh->thread, &ret);
+        pthread_join(thread, &ret);
     } else {
         // asymmetric graph, directed
         _dir = 1;
@@ -133,8 +146,12 @@ int main(int argc, char** argv)
         
         //If system support adjacency store snapshot, create thread for index creation
         // Run analytics in separte thread. If adjacency store is non-snapshot, do indexing and analytics in seq.
-        index_t slide_sz = (1L << 16);
+        pthread_t thread;
+        index_t slide_sz = BATCH_SIZE;
         sstreamh = reg_sstream_view<asymmetricVertex>(&G, ubatch, v_count, kickstarter_bfs_serial<dst_id_t>, C_THREAD, slide_sz);
+        thread =  sstreamh->thread;
+
+        //if (0 != pthread_create(&thread, 0, test_ingestion, ubatch)) {assert(0);}
     
         //perform micro batching here using ubatch pointer
         int64_t flags = SOURCE_BINARY;
@@ -143,7 +160,7 @@ int main(int argc, char** argv)
         
         //Wait for threads to complete
         void* ret;
-        pthread_join(sstreamh->thread, &ret);
+        pthread_join(thread, &ret);
     
     }
 
