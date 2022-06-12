@@ -533,12 +533,21 @@ public:
     long num_cancelled_edges;
 
     timer1.start();
+    #ifdef GBENCH
     tie(edge_additions, edge_deletions_temp, num_edges_read_from_file,
         num_cancelled_edges) =
         getNewEdgesFromFile_gbench(stream_file, max_batch_size, my_graph,
                             my_graph.isSymmetric(), simple_flag,
                             fixed_batch_flag, enforce_edge_validity_flag,
                             debug_flag, stream_closed, time_other);
+    #else
+    tie(edge_additions, edge_deletions_temp, num_edges_read_from_file,
+        num_cancelled_edges) =
+        getNewEdgesFromFile(stream_file, max_batch_size, my_graph,
+                            my_graph.isSymmetric(), simple_flag,
+                            fixed_batch_flag, enforce_edge_validity_flag,
+                            debug_flag, stream_closed, time_other);
+    #endif
     //cout << "Reading Time : " << timer1.stop() << endl;
 
     if (stream_closed && num_edges_read_from_file == 0) {

@@ -1,5 +1,7 @@
 #include <algorithm>
 
+#define GBENCH
+
 #include "../core/common/utils.h"
 #include "../core/graph/IO.h"
 #include "../core/graph/graph.h"
